@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+<title>TOGAF Study Assistant — T-Systems</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json"/>
+<meta name="theme-color" content="#F59E0B"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<meta name="apple-mobile-web-app-title" content="TOGAF Tutor"/>
+<link rel="apple-touch-icon" href="icons/icon-192x192.png"/>
+
+<!-- Description -->
+<meta name="description" content="AI-powered TOGAF 10 exam preparation — T-Systems LLM Hub"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // SW registration failed — app still works online
+      });
+    });
+  }
+</script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body {
+    background: #0A0E1A;
+    font-family: Georgia, 'Times New Roman', serif;
+    /* Safe area for notch/home bar on mobile */
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    /* Prevent text size adjustment on orientation change */
+    -webkit-text-size-adjust: 100%;
+  }
+  /* Prevent pull-to-refresh interfering */
+  html { overscroll-behavior: none; }
+  /* Better tap highlight on mobile */
+  * { -webkit-tap-highlight-color: rgba(245,158,11,0.15); }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 3px; }
+  @keyframes bounce {
+    0%   { transform: translateY(0);   opacity: .4; }
+    100% { transform: translateY(-7px); opacity: 1;  }
+  }
+  textarea:focus, input:focus, select:focus {
+    border-color: rgba(245,158,11,.55) !important;
+    outline: none;
+  }
+  .tab-btn:hover  { color: #cbd5e1 !important; }
+  .card:hover     { transform: translateY(-3px); }
+  .phase:hover    { transform: translateY(-2px); }
+  .qa-btn:hover   { opacity: .85; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+// ── Config ───────────────────────────────────────────────────────────────────
+const DEFAULT_API_KEY = "";   // Optionally pre-fill your LLM Hub key here
+const DEFAULT_MODEL   = "mistral-large-latest";
+const LLM_URL         = "https://llm-server.llmhub.t-systems.net/v1/chat/completions";
+
+const MODELS = [
+  { id:"mistral-large-latest",          label:"Mistral Large"   },
+  { id:"mistral-small-latest",          label:"Mistral Small"   },
+  { id:"Meta-Llama-3.1-70B-Instruct",   label:"Llama 3.1 70B"  },
+  { id:"Meta-Llama-3.1-8B-Instruct",    label:"Llama 3.1 8B"   },
+  { id:"gpt-4o",                         label:"GPT-4o"          },
+  { id:"gpt-4o-mini",                    label:"GPT-4o Mini"     },
+];
+
+const SYSTEM_PROMPT = `You are an expert TOGAF 10 certification tutor. Your students are enterprise professionals preparing for the Foundation and Practitioner exams.
+
+Guidelines:
+- Be concise but complete
+- Use bullet points for lists, prose for explanations  
+- Flag common exam traps
+- Draw SAP/enterprise architecture parallels when helpful
+- Ground all answers in TOGAF 10 standard`;
+
+// ── Static Data ───────────────────────────────────────────────────────────────
+const ADM_PHASES = [
+  { phase:"Pre", name:"Preliminary",               color:"#64748B" },
+  { phase:"A",   name:"Architecture Vision",       color:"#F59E0B" },
+  { phase:"B",   name:"Business Architecture",     color:"#10B981" },
+  { phase:"C",   name:"IS Architecture",           color:"#6366F1" },
+  { phase:"D",   name:"Technology Architecture",   color:"#EC4899" },
+  { phase:"E",   name:"Opportunities & Solutions", color:"#14B8A6" },
+  { phase:"F",   name:"Migration Planning",        color:"#F97316" },
+  { phase:"G",   name:"Implementation Governance", color:"#EF4444" },
+  { phase:"H",   name:"Architecture Change Mgmt",  color:"#8B5CF6" },
+];
+
+const QUIZ_QUESTIONS = [
+  { q:"What does ADM stand for?",                                          a:"Architecture Development Method",                                             topic:"adm"          },
+  { q:"How many ADM phases are there (including Preliminary and RM)?",     a:"10 phases",                                                                   topic:"adm"          },
+  { q:"What are the four architecture domains in TOGAF?",                  a:"Business, Data, Application, Technology (BDAT)",                              topic:"domains"      },
+  { q:"What is an Architecture Building Block (ABB)?",                     a:"A component defining architecture requirements that directs Solution Building Block development", topic:"concepts" },
+  { q:"What are the six classes in the Architecture Repository?",          a:"Strategic Landscape, Architectural Landscape, Standards Info Base, Reference Library, Governance Log, Architecture Metamodel", topic:"concepts" },
+  { q:"Which phase produces the Statement of Architecture Work?",          a:"Phase A: Architecture Vision",                                                topic:"adm"          },
+  { q:"What is the Enterprise Continuum?",                                 a:"A classification of architectural assets from Foundation Architecture to Organization-Specific Architecture", topic:"enterprise" },
+  { q:"What is an Architecture Contract?",                                 a:"A joint agreement between development partners and sponsors on deliverables, quality, and fitness-for-purpose", topic:"governance" },
+  { q:"What is an SBB?",                                                   a:"Solution Building Block — a physical solution that realises an Architecture Building Block", topic:"concepts" },
+  { q:"What is the purpose of Phase E: Opportunities & Solutions?",        a:"Generate the initial Architecture Roadmap and determine if an incremental approach is needed", topic:"adm" },
+  { q:"What does the Architecture Board do?",                              a:"Oversees IT governance strategy and provides governance and arbitration for architecture decisions", topic:"governance" },
+  { q:"What deliverable comes out of Phase F: Migration Planning?",        a:"Architecture Roadmap, Transition Architectures, and an Implementation & Migration Plan", topic:"deliverables" },
+  { q:"What is the difference between an ABB and an SBB?",                a:"ABB is architecture-level (defines requirements); SBB is solution-level (implements the ABB)", topic:"concepts" },
+  { q:"What triggers the Requirements Management phase?",                  a:"It is continuous throughout all ADM phases — it manages requirements identified in any phase", topic:"adm" },
+  { q:"What are the two types of building blocks in TOGAF?",               a:"Architecture Building Blocks (ABBs) and Solution Building Blocks (SBBs)",     topic:"concepts"     },
+];
+
+const TOPICS = [
+  { id:"adm",          label:"ADM Phases",               icon:"⬡", color:"#F59E0B" },
+  { id:"domains",      label:"Architecture Domains",     icon:"◈", color:"#10B981" },
+  { id:"concepts",     label:"Core Concepts",            icon:"◉", color:"#6366F1" },
+  { id:"governance",   label:"Governance",               icon:"⬟", color:"#EC4899" },
+  { id:"deliverables", label:"Deliverables & Artifacts", icon:"◧", color:"#14B8A6" },
+  { id:"enterprise",   label:"Enterprise Continuum",     icon:"◈", color:"#F97316" },
+];
+
+const STUDY_CARDS = [
+  { color:"#F59E0B", icon:"⬡", title:"ADM Deep Dive",           desc:"All phases, inputs, outputs & transitions",       msg:"Give me a comprehensive study guide for all TOGAF ADM phases — key inputs, outputs, and common exam traps for each" },
+  { color:"#10B981", icon:"◉", title:"Part 1 Strategy",          desc:"Foundation — terminology & concepts",             msg:"What are the most important topics for TOGAF Part 1 Foundation? Give a prioritised study list with tips" },
+  { color:"#6366F1", icon:"◈", title:"Part 2 Strategy",          desc:"Practitioner — scenario application",             msg:"How should I approach TOGAF Part 2 Practitioner scenario questions? Give me a step-by-step answering framework" },
+  { color:"#EC4899", icon:"⬟", title:"Architecture Governance",  desc:"Contracts, compliance, Architecture Board",       msg:"Explain TOGAF Architecture Governance in detail — Architecture Board, Architecture Contracts, compliance framework, and Phase G connection" },
+  { color:"#14B8A6", icon:"◧", title:"Architecture Repository",  desc:"Six content classes & metamodel",                 msg:"Explain the TOGAF Architecture Repository — its six content classes, how it links to the Enterprise Continuum, and typical exam questions" },
+  { color:"#F97316", icon:"◉", title:"TOGAF ↔ SAP Parallels",   desc:"Map TOGAF to SAP S/4HANA transformations",        msg:"Create a detailed mapping between TOGAF ADM phases and SAP S/4HANA transformation work — how do TOGAF deliverables map to SAP project phases and artefacts?" },
+  { color:"#8B5CF6", icon:"◈", title:"Views & Viewpoints",       desc:"Stakeholder communication & architecture views",  msg:"Explain TOGAF Views and Viewpoints — their differences, when to use each, and how this relates to stakeholder management in the ADM" },
+  { color:"#EF4444", icon:"✦", title:"Common Exam Traps",        desc:"Trick questions and how to avoid them",           msg:"What are the most common trick questions and trap answers in TOGAF exams? Give examples with explanations of why wrong answers are tempting" },
+];
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function hexRgb(hex){
+  const r=/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+  return r?`${parseInt(r[1],16)},${parseInt(r[2],16)},${parseInt(r[3],16)}`:"255,255,255";
+}
+function md(text){
+  return text
+    .replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>")
+    .replace(/\*(.*?)\*/g,"<em>$1</em>")
+    .replace(/`(.*?)`/g,'<code style="background:rgba(255,255,255,.12);padding:1px 6px;border-radius:4px;font-size:.88em">$1</code>')
+    .replace(/^• /gm,'<span style="color:#F59E0B">▸</span> ')
+    .replace(/\n• /g,'<br/><span style="color:#F59E0B">▸</span> ')
+    .replace(/\n/g,"<br/>");
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+const { useState, useRef, useEffect } = React;
+
+function App(){
+  const [tab,         setTab]         = useState("chat");
+  const [model,       setModel]       = useState(DEFAULT_MODEL);
+  const [apiKey,      setApiKey]      = useState(DEFAULT_API_KEY);
+  const [showCfg,     setShowCfg]     = useState(!DEFAULT_API_KEY);
+  const [messages,    setMessages]    = useState([{role:"assistant",content:"Welcome! 👋  I'm your **TOGAF Study Assistant**, powered by the T-Systems LLM Hub.\n\nI can help with:\n\n• Deep-dive explanations of any TOGAF concept\n• Exam-style questions and quizzes\n• ADM phase walkthroughs with SAP parallels\n• Part 1 & Part 2 strategies\n\nWhat would you like to study today?"}]);
+  const [input,       setInput]       = useState("");
+  const [loading,     setLoading]     = useState(false);
+  const [quiz,        setQuiz]        = useState({active:false});
+  const endRef = useRef(null);
+
+  useEffect(()=>{ endRef.current?.scrollIntoView({behavior:"smooth"}); },[messages]);
+
+  async function ask(msgs){
+    const r = await fetch(LLM_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+      body:JSON.stringify({model,max_tokens:1024,messages:[{role:"system",content:SYSTEM_PROMPT},...msgs.map(m=>({role:m.role,content:m.content}))]})
+    });
+    if(!r.ok) throw new Error(`LLM Hub ${r.status}`);
+    const d=await r.json();
+    return d.choices?.[0]?.message?.content||"No response.";
+  }
+
+  async function send(override){
+    const msg=(override||input).trim();
+    if(!msg||loading) return;
+    setInput("");
+    const next=[...messages,{role:"user",content:msg}];
+    setMessages(next);
+    setLoading(true);
+    try{
+      const reply=await ask(next);
+      setMessages(p=>[...p,{role:"assistant",content:reply}]);
+    }catch(e){
+      setMessages(p=>[...p,{role:"assistant",content:`⚠️ ${e.message}\n\nPlease check your API key in ⚙️ Settings.`}]);
+    }
+    setLoading(false);
+  }
+
+  function startQuiz(topicId){
+    const qs=(topicId?QUIZ_QUESTIONS.filter(q=>q.topic===topicId):[...QUIZ_QUESTIONS]).sort(()=>Math.random()-.5);
+    setQuiz({active:true,qs,idx:0,score:0,answered:false,ans:"",done:false,topicId});
+    setTab("quiz");
+  }
+
+  function checkAnswer(){
+    const correct=quiz.ans.toLowerCase().includes(quiz.qs[quiz.idx].a.toLowerCase().slice(0,12));
+    setQuiz(p=>({...p,answered:true,correct,score:correct?p.score+1:p.score}));
+  }
+
+  function nextQ(){
+    const next=quiz.idx+1;
+    if(next>=quiz.qs.length) setQuiz(p=>({...p,done:true}));
+    else setQuiz(p=>({...p,idx:next,answered:false,ans:""}));
+  }
+
+  const QUICK=[
+    {label:"Explain all ADM phases",   msg:"Give me a concise overview of all TOGAF ADM phases with their key outputs"},
+    {label:"Quiz me on Phase A",       msg:"Quiz me on Phase A: Architecture Vision — 3 exam-style questions one by one"},
+    {label:"Part 2 exam strategies",   msg:"Most important strategies for passing the TOGAF Part 2 Practitioner exam?"},
+    {label:"TOGAF ↔ SAP parallels",   msg:"How does TOGAF ADM map to an SAP S/4HANA brownfield migration? Practical parallels please."},
+  ];
+
+  // colours
+  const C={bg:"#0A0E1A",surface:"rgba(255,255,255,0.05)",border:"rgba(255,255,255,0.08)",amber:"#F59E0B",muted:"#94A3B8",text:"#E2E8F0"};
+
+  return(
+    <div style={{background:C.bg,minHeight:"100vh",color:C.text,display:"flex",flexDirection:"column",fontFamily:"Georgia,serif"}}>
+
+      {/* ── Header ── */}
+      <div style={{background:"linear-gradient(135deg,#0F172A,#1E1B4B)",borderBottom:"1px solid rgba(245,158,11,.3)",padding:"13px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:13}}>
+          <div style={{width:40,height:40,borderRadius:11,background:"linear-gradient(135deg,#F59E0B,#D97706)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:19,boxShadow:"0 0 18px rgba(245,158,11,.45)"}}>⬡</div>
+          <div>
+            <div style={{fontSize:16,fontWeight:"bold",letterSpacing:.8,color:"#F8FAFC"}}>TOGAF Study Assistant</div>
+            <div style={{fontSize:10,color:C.muted,letterSpacing:2,textTransform:"uppercase"}}>T-Systems LLM Hub · {MODELS.find(m=>m.id===model)?.label}</div>
+          </div>
+        </div>
+        <button onClick={()=>setShowCfg(s=>!s)} style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"6px 14px",color:C.muted,cursor:"pointer",fontSize:13}}>⚙️ Settings</button>
+      </div>
+
+      {/* ── Settings Panel ── */}
+      {showCfg&&(
+        <div style={{background:"#0F172A",borderBottom:"1px solid rgba(255,255,255,.06)",padding:"14px 22px",display:"flex",gap:18,alignItems:"flex-end",flexWrap:"wrap",flexShrink:0}}>
+          <div>
+            <div style={{fontSize:11,color:"#64748B",marginBottom:5,textTransform:"uppercase",letterSpacing:1}}>LLM Hub API Key</div>
+            <input type="password" value={apiKey} onChange={e=>setApiKey(e.target.value)}
+              placeholder="Paste your T-Systems LLM Hub key here"
+              style={{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"8px 14px",color:C.text,fontSize:13,width:310}}/>
+          </div>
+          <div>
+            <div style={{fontSize:11,color:"#64748B",marginBottom:5,textTransform:"uppercase",letterSpacing:1}}>Model</div>
+            <select value={model} onChange={e=>setModel(e.target.value)}
+              style={{background:"#1E293B",border:"1px solid rgba(255,255,255,.12)",borderRadius:8,padding:"8px 14px",color:C.text,fontSize:13,cursor:"pointer"}}>
+              {MODELS.map(m=><option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
+          </div>
+          <button onClick={()=>setShowCfg(false)} style={{background:"linear-gradient(135deg,#F59E0B,#D97706)",border:"none",borderRadius:8,padding:"8px 20px",color:"white",cursor:"pointer",fontSize:13,fontWeight:"bold"}}>Save & Close</button>
+        </div>
+      )}
+
+      {/* ── Tab Bar ── */}
+      <div style={{display:"flex",background:"#0F172A",borderBottom:"1px solid rgba(255,255,255,.06)",flexShrink:0}}>
+        {[{id:"chat",l:"💬 Tutor Chat"},{id:"adm",l:"⬡ ADM Map"},{id:"quiz",l:"✦ Quiz"},{id:"topics",l:"◈ Topics"}].map(t=>(
+          <button key={t.id} className="tab-btn" onClick={()=>setTab(t.id)} style={{padding:"11px 18px",border:"none",background:"transparent",color:tab===t.id?"#F59E0B":"#64748B",borderBottom:tab===t.id?"2px solid #F59E0B":"2px solid transparent",cursor:"pointer",fontSize:13,fontWeight:tab===t.id?"bold":"normal",letterSpacing:.4,transition:"color .15s"}}>{t.l}</button>
+        ))}
+      </div>
+
+      {/* ── Content ── */}
+      <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+
+        {/* CHAT */}
+        {tab==="chat"&&(
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{flex:1,overflowY:"auto",padding:"18px 22px",display:"flex",flexDirection:"column",gap:15}}>
+              {messages.map((m,i)=>(
+                <div key={i} style={{display:"flex",justifyContent:m.role==="user"?"flex-end":"flex-start",alignItems:"flex-start",gap:9}}>
+                  {m.role==="assistant"&&<div style={{width:30,height:30,borderRadius:8,flexShrink:0,background:"linear-gradient(135deg,#F59E0B,#D97706)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>⬡</div>}
+                  <div style={{maxWidth:"72%",background:m.role==="user"?"linear-gradient(135deg,#1E3A5F,#1E40AF)":C.surface,border:m.role==="user"?"1px solid rgba(59,130,246,.4)":C.border,borderRadius:m.role==="user"?"16px 4px 16px 16px":"4px 16px 16px 16px",padding:"11px 15px",fontSize:14,lineHeight:1.72,color:C.text}}
+                    dangerouslySetInnerHTML={{__html:md(m.content)}}/>
+                </div>
+              ))}
+              {loading&&(
+                <div style={{display:"flex",alignItems:"center",gap:9}}>
+                  <div style={{width:30,height:30,borderRadius:8,background:"linear-gradient(135deg,#F59E0B,#D97706)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:13}}>⬡</div>
+                  <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:"4px 16px 16px 16px",padding:"13px 18px",display:"flex",gap:5}}>
+                    {[0,1,2].map(n=><span key={n} style={{display:"block",width:7,height:7,borderRadius:"50%",background:"#F59E0B",animation:`bounce 1s ease-in-out ${n*.2}s infinite alternate`}}/>)}
+                  </div>
+                </div>
+              )}
+              <div ref={endRef}/>
+            </div>
+
+            {messages.length<=1&&(
+              <div style={{padding:"0 22px 10px",display:"flex",gap:7,flexWrap:"wrap"}}>
+                {QUICK.map((q,i)=>(
+                  <button key={i} onClick={()=>send(q.msg)} style={{background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.25)",borderRadius:20,padding:"5px 13px",color:"#F59E0B",fontSize:12,cursor:"pointer"}}>{q.label}</button>
+                ))}
+              </div>
+            )}
+
+            <div style={{padding:"13px 22px",background:"#0F172A",borderTop:"1px solid rgba(255,255,255,.06)",display:"flex",gap:10,alignItems:"flex-end",flexShrink:0}}>
+              <textarea value={input} onChange={e=>setInput(e.target.value)}
+                onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}}}
+                placeholder="Ask anything about TOGAF…  (Enter = send,  Shift+Enter = new line)"
+                rows={1}
+                style={{flex:1,background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px 15px",color:C.text,fontSize:14,resize:"none",lineHeight:1.5,maxHeight:110,fontFamily:"inherit"}}/>
+              <button onClick={()=>send()} disabled={loading||!input.trim()} style={{background:loading||!input.trim()?"rgba(245,158,11,.2)":"linear-gradient(135deg,#F59E0B,#D97706)",border:"none",borderRadius:11,width:46,height:46,color:"white",fontSize:17,cursor:loading||!input.trim()?"not-allowed":"pointer",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>▶</button>
+            </div>
+          </div>
+        )}
+
+        {/* ADM MAP */}
+        {tab==="adm"&&(
+          <div style={{flex:1,overflowY:"auto",padding:22}}>
+            <div style={{fontSize:19,fontWeight:"bold",color:"#F8FAFC",marginBottom:4}}>ADM Phase Reference</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Click any phase to get an explanation from your tutor</div>
+
+            <div style={{display:"flex",justifyContent:"center",marginBottom:14}}>
+              <div className="phase" onClick={()=>{send("Explain TOGAF Requirements Management — role, purpose, how it interacts with all other ADM phases, and common exam questions");setTab("chat");}}
+                style={{background:"linear-gradient(135deg,rgba(6,182,212,.18),rgba(6,182,212,.05))",border:"2px solid #06B6D4",borderRadius:11,padding:"11px 44px",cursor:"pointer",textAlign:"center",transition:"transform .2s"}}>
+                <div style={{fontSize:10,color:"#06B6D4",letterSpacing:2,marginBottom:3}}>RM</div>
+                <div style={{fontSize:14,fontWeight:"bold",color:"#E2E8F0"}}>Requirements Management</div>
+                <div style={{fontSize:11,color:"#64748B",marginTop:2}}>Continuous — centre of ADM</div>
+              </div>
+            </div>
+
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:11}}>
+              {ADM_PHASES.map(p=>(
+                <div key={p.phase} className="phase" onClick={()=>{send(`Explain TOGAF Phase ${p.phase}: ${p.name} — purpose, key inputs, outputs, main deliverables, and common exam questions`);setTab("chat");}}
+                  style={{background:`rgba(${hexRgb(p.color)},.12)`,border:`1px solid rgba(${hexRgb(p.color)},.4)`,borderRadius:11,padding:15,cursor:"pointer",transition:"transform .2s"}}>
+                  <div style={{fontSize:10,letterSpacing:3,color:p.color,fontWeight:"bold",marginBottom:5,textTransform:"uppercase"}}>Phase {p.phase}</div>
+                  <div style={{fontSize:14,fontWeight:"bold",color:"#F8FAFC"}}>{p.name}</div>
+                  <div style={{fontSize:11,color:p.color,marginTop:7,opacity:.8}}>Tap to explore →</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{marginTop:18,background:"rgba(245,158,11,.08)",border:"1px solid rgba(245,158,11,.2)",borderRadius:11,padding:15}}>
+              <div style={{fontSize:13,color:"#F59E0B",fontWeight:"bold",marginBottom:5}}>💡 Part 2 Exam Tip</div>
+              <div style={{fontSize:13,color:C.muted,lineHeight:1.6}}>Always identify <strong style={{color:C.text}}>which phase the scenario is in</strong> first. Most wrong answers are "right things done in the wrong phase."</div>
+            </div>
+          </div>
+        )}
+
+        {/* QUIZ */}
+        {tab==="quiz"&&(
+          <div style={{flex:1,overflowY:"auto",padding:22}}>
+            {!quiz.active?(
+              <div>
+                <div style={{fontSize:19,fontWeight:"bold",color:"#F8FAFC",marginBottom:4}}>Practice Quiz</div>
+                <div style={{fontSize:13,color:C.muted,marginBottom:18}}>Choose a topic or take a full mixed quiz</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:11,marginBottom:13}}>
+                  {TOPICS.map(t=>(
+                    <div key={t.id} className="card" onClick={()=>startQuiz(t.id)}
+                      style={{background:`rgba(${hexRgb(t.color)},.1)`,border:`1px solid rgba(${hexRgb(t.color)},.3)`,borderRadius:11,padding:15,cursor:"pointer",transition:"transform .2s"}}>
+                      <div style={{fontSize:22,marginBottom:7}}>{t.icon}</div>
+                      <div style={{fontSize:14,fontWeight:"bold",color:"#F8FAFC"}}>{t.label}</div>
+                      <div style={{fontSize:11,color:"#64748B",marginTop:3}}>{QUIZ_QUESTIONS.filter(q=>q.topic===t.id).length} questions</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="card" onClick={()=>startQuiz(null)}
+                  style={{background:"linear-gradient(135deg,rgba(245,158,11,.18),rgba(217,119,6,.08))",border:"1px solid rgba(245,158,11,.4)",borderRadius:11,padding:18,cursor:"pointer",textAlign:"center",transition:"transform .2s"}}>
+                  <div style={{fontSize:17,fontWeight:"bold",color:"#F59E0B"}}>⚡ Full Mixed Quiz</div>
+                  <div style={{fontSize:13,color:C.muted,marginTop:3}}>{QUIZ_QUESTIONS.length} questions — randomised</div>
+                </div>
+              </div>
+            ):quiz.done?(
+              <div style={{textAlign:"center",padding:"36px 0"}}>
+                <div style={{fontSize:52,marginBottom:14}}>{quiz.score/quiz.qs.length>=.8?"🏆":quiz.score/quiz.qs.length>=.6?"👍":"📚"}</div>
+                <div style={{fontSize:30,fontWeight:"bold",color:"#F59E0B",marginBottom:7}}>{quiz.score} / {quiz.qs.length}</div>
+                <div style={{fontSize:15,color:C.muted,marginBottom:28}}>{quiz.score/quiz.qs.length>=.8?"Excellent — exam ready!":quiz.score/quiz.qs.length>=.6?"Good progress, keep reviewing.":"Keep studying — you'll get there!"}</div>
+                <div style={{display:"flex",gap:11,justifyContent:"center"}}>
+                  <button onClick={()=>startQuiz(quiz.topicId)} style={{background:"linear-gradient(135deg,#F59E0B,#D97706)",border:"none",borderRadius:10,padding:"11px 22px",color:"white",cursor:"pointer",fontSize:14}}>Try Again</button>
+                  <button onClick={()=>setQuiz({active:false})} style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:10,padding:"11px 22px",color:C.muted,cursor:"pointer",fontSize:14}}>Back</button>
+                </div>
+              </div>
+            ):(
+              <div style={{maxWidth:560,margin:"0 auto"}}>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:14}}>
+                  <div style={{fontSize:13,color:"#64748B"}}>Question {quiz.idx+1} of {quiz.qs.length}</div>
+                  <div style={{fontSize:13,color:"#F59E0B"}}>Score: {quiz.score}</div>
+                </div>
+                <div style={{background:C.surface,borderRadius:4,height:4,marginBottom:22}}>
+                  <div style={{background:"linear-gradient(90deg,#F59E0B,#D97706)",height:4,borderRadius:4,width:`${(quiz.idx/quiz.qs.length)*100}%`,transition:"width .3s"}}/>
+                </div>
+                <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:14,padding:20,marginBottom:16}}>
+                  <div style={{fontSize:15,lineHeight:1.65,color:"#F8FAFC"}}>{quiz.qs[quiz.idx].q}</div>
+                </div>
+                {!quiz.answered?(
+                  <div>
+                    <textarea value={quiz.ans} onChange={e=>setQuiz(p=>({...p,ans:e.target.value}))}
+                      placeholder="Type your answer…" rows={3}
+                      style={{width:"100%",background:C.surface,border:`1px solid ${C.border}`,borderRadius:11,padding:"11px 15px",color:C.text,fontSize:14,resize:"none",marginBottom:11,fontFamily:"inherit"}}/>
+                    <button onClick={checkAnswer} disabled={!quiz.ans.trim()} style={{width:"100%",background:quiz.ans.trim()?"linear-gradient(135deg,#F59E0B,#D97706)":"rgba(245,158,11,.2)",border:"none",borderRadius:11,padding:13,color:"white",fontSize:15,fontWeight:"bold",cursor:quiz.ans.trim()?"pointer":"not-allowed"}}>Check Answer</button>
+                  </div>
+                ):(
+                  <div>
+                    <div style={{background:quiz.correct?"rgba(16,185,129,.15)":"rgba(239,68,68,.15)",border:`1px solid ${quiz.correct?"rgba(16,185,129,.4)":"rgba(239,68,68,.4)"}`,borderRadius:11,padding:15,marginBottom:11}}>
+                      <div style={{fontSize:13,fontWeight:"bold",color:quiz.correct?"#10B981":"#EF4444",marginBottom:7}}>{quiz.correct?"✓ Correct!":"✗ Not quite"}</div>
+                      <div style={{fontSize:12,color:C.muted,marginBottom:5}}>Model Answer:</div>
+                      <div style={{fontSize:14,color:C.text,lineHeight:1.6}}>{quiz.qs[quiz.idx].a}</div>
+                    </div>
+                    <div style={{display:"flex",gap:9}}>
+                      <button className="qa-btn" onClick={()=>{send(`Explain in more detail: "${quiz.qs[quiz.idx].q}" — correct answer is: ${quiz.qs[quiz.idx].a}`);setTab("chat");}}
+                        style={{flex:1,background:"rgba(245,158,11,.1)",border:"1px solid rgba(245,158,11,.3)",borderRadius:10,padding:11,color:"#F59E0B",cursor:"pointer",fontSize:13,transition:"opacity .15s"}}>Ask Tutor</button>
+                      <button onClick={nextQ} style={{flex:2,background:"linear-gradient(135deg,#F59E0B,#D97706)",border:"none",borderRadius:10,padding:11,color:"white",cursor:"pointer",fontSize:14,fontWeight:"bold"}}>{quiz.idx+1>=quiz.qs.length?"See Results →":"Next →"}</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TOPICS */}
+        {tab==="topics"&&(
+          <div style={{flex:1,overflowY:"auto",padding:22}}>
+            <div style={{fontSize:19,fontWeight:"bold",color:"#F8FAFC",marginBottom:4}}>Study Topics</div>
+            <div style={{fontSize:13,color:C.muted,marginBottom:22}}>Tap any card to start a deep-dive with your tutor</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(240px,1fr))",gap:13}}>
+              {STUDY_CARDS.map((t,i)=>(
+                <div key={i} className="card" onClick={()=>{send(t.msg);setTab("chat");}}
+                  style={{background:`rgba(${hexRgb(t.color)},.08)`,border:`1px solid rgba(${hexRgb(t.color)},.25)`,borderRadius:13,padding:"17px 19px",cursor:"pointer",transition:"transform .2s, border-color .2s"}}
+                  onMouseOver={e=>e.currentTarget.style.borderColor=`rgba(${hexRgb(t.color)},.55)`}
+                  onMouseOut={e=>e.currentTarget.style.borderColor=`rgba(${hexRgb(t.color)},.25)`}>
+                  <div style={{fontSize:24,color:t.color,marginBottom:9}}>{t.icon}</div>
+                  <div style={{fontSize:14,fontWeight:"bold",color:"#F8FAFC",marginBottom:4}}>{t.title}</div>
+                  <div style={{fontSize:12,color:"#64748B",lineHeight:1.5}}>{t.desc}</div>
+                  <div style={{marginTop:11,fontSize:11,color:t.color,opacity:.75}}>Ask Tutor →</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
